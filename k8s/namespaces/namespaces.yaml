@@ -1,0 +1,20 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: demo
+  labels:
+    environment: demo
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: observability
+  labels:
+    environment: demo
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: spinnaker
+  labels:
+    environment: demo

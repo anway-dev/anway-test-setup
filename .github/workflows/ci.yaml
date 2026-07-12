@@ -1,0 +1,110 @@
+name: CI — Build & Push
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'services/**'
+      - 'runners/**'
+  pull_request:
+    branches: [main]
+
+env:
+  AWS_REGION: ${{ vars.AWS_REGION || 'us-east-1' }}
+
+jobs:
+  detect-changes:
+    runs-on: ubuntu-latest
+    outputs:
+      services: ${{ steps.changes.outputs.services }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dorny/paths-filter@v3
+        id: changes
+        with:
+          filters: |
+            api-gateway:         services/api-gateway/**
+            auth-service:        services/auth-service/**
+            user-service:        services/user-service/**
+            product-service:     services/product-service/**
+            cart-service:        services/cart-service/**
+            order-service:       services/order-service/**
+            payment-service:     services/payment-service/**
+            inventory-service:   services/inventory-service/**
+            notification-service: services/notification-service/**
+            search-service:      services/search-service/**
+            recommendation-service: services/recommendation-service/**
+            review-service:      services/review-service/**
+            shipping-service:    services/shipping-service/**
+            analytics-service:   services/analytics-service/**
+            admin-service:       services/admin-service/**
+            traffic-simulator:   runners/traffic-simulator/**
+            chaos-runner:        runners/chaos-runner/**
+
+  build-push:
+    needs: detect-changes
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        service:
+          - api-gateway
+          - auth-service
+          - user-service
+          - product-service
+          - cart-service
+          - order-service
+          - payment-service
+          - inventory-service
+          - notification-service
+          - search-service
+          - recommendation-service
+          - review-service
+          - shipping-service
+          - analytics-service
+          - admin-service
+          - traffic-simulator
+          - chaos-runner
+    permissions:
+      id-token: write
+      contents: read
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure AWS credentials (OIDC — no static keys)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Login to ECR
+        id: ecr-login
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Set image vars
+        id: vars
+        run: |
+          SHORT_SHA="${{ github.sha }}"
+          SHORT_SHA="${SHORT_SHA:0:7}"
+          echo "tag=${SHORT_SHA}" >> $GITHUB_OUTPUT
+          echo "registry=${{ steps.ecr-login.outputs.registry }}" >> $GITHUB_OUTPUT
+          if [[ "${{ matrix.service }}" == traffic-simulator || "${{ matrix.service }}" == chaos-runner ]]; then
+            echo "context=runners/${{ matrix.service }}" >> $GITHUB_OUTPUT
+          else
+            echo "context=services/${{ matrix.service }}" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Build and push
+        uses: docker/build-push-action@v5
+        with:
+          context: ${{ steps.vars.outputs.context }}
+          push: ${{ github.ref == 'refs/heads/main' }}
+          tags: |
+            ${{ steps.vars.outputs.registry }}/anway-demo/${{ matrix.service }}:${{ steps.vars.outputs.tag }}
+            ${{ steps.vars.outputs.registry }}/anway-demo/${{ matrix.service }}:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Output image URI
+        if: github.ref == 'refs/heads/main'
+        run: echo "Pushed ${{ steps.vars.outputs.registry }}/anway-demo/${{ matrix.service }}:${{ steps.vars.outputs.tag }}"

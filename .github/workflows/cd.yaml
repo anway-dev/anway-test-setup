@@ -1,0 +1,116 @@
+name: CD — Notify Anway (deploy gate)
+
+# CI builds + pushes image. CD sends a deploy_trigger event to Anway.
+# Anway's Deploy Agent:
+#   1. Resolves the service in the Knowledge Graph (connector coordinates → Spinnaker app)
+#   2. Surfaces a deploy gate: "Deploy order-service:a1b2c3d to prod — approve?"
+#   3. On approval (human or auto-policy), triggers the Spinnaker pipeline via connector
+#   4. Monitors rollout via Prometheus connector
+#   5. On failure: auto-rollback via Spinnaker connector, creates incident in graph
+#   6. Full audit logged — who approved, what deployed, duration, outcome
+
+on:
+  workflow_run:
+    workflows: ["CI — Build & Push"]
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      image_tag:
+        description: Image tag to deploy
+        required: false
+      service:
+        description: Single service to deploy (blank = all changed services)
+        required: false
+
+jobs:
+  notify-anway:
+    if: ${{ github.event.workflow_run.conclusion == 'success' || github.event_name == 'workflow_dispatch' }}
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure AWS credentials (OIDC — no static keys)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION || 'us-east-1' }}
+
+      - name: Login to ECR
+        id: ecr-login
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Resolve image tag and changed services
+        id: vars
+        run: |
+          TAG="${{ github.event.inputs.image_tag }}"
+          if [ -z "$TAG" ]; then
+            SHA="${{ github.event.workflow_run.head_sha }}"
+            TAG="${SHA:0:7}"
+          fi
+          echo "tag=${TAG}" >> $GITHUB_OUTPUT
+          echo "registry=${{ steps.ecr-login.outputs.registry }}" >> $GITHUB_OUTPUT
+          echo "sha=${{ github.event.workflow_run.head_sha || github.sha }}" >> $GITHUB_OUTPUT
+
+          # Detect changed services from CI run (or use workflow_dispatch input)
+          SVC="${{ github.event.inputs.service }}"
+          if [ -z "$SVC" ]; then
+            # All services (CI matrix always builds all on main push)
+            SVC="api-gateway,auth-service,user-service,product-service,cart-service,order-service,payment-service,inventory-service,notification-service,search-service,recommendation-service,review-service,shipping-service,analytics-service,admin-service"
+          fi
+          echo "services=${SVC}" >> $GITHUB_OUTPUT
+
+      - name: Send deploy_trigger event to Anway
+        env:
+          ANWAY_GATEWAY_URL: ${{ secrets.ANWAY_GATEWAY_URL }}
+          ANWAY_CONNECTOR_KEY: ${{ secrets.ANWAY_CONNECTOR_KEY }}
+          ANWAY_TENANT_ID: ${{ secrets.ANWAY_TENANT_ID }}
+        run: |
+          ECR_REGISTRY="${{ steps.ecr-login.outputs.registry }}"
+          IMAGE_TAG="${{ steps.vars.outputs.tag }}"
+          SHA="${{ steps.vars.outputs.sha }}"
+          SERVICES="${{ steps.vars.outputs.services }}"
+
+          # Split CSV services and fire one event per service
+          IFS=',' read -ra SVC_LIST <<< "$SERVICES"
+          for SVC in "${SVC_LIST[@]}"; do
+            IMAGE_URI="${ECR_REGISTRY}/anway-demo/${SVC}:${IMAGE_TAG}"
+            echo "Notifying Anway: deploy ${SVC}:${IMAGE_TAG}"
+
+            curl -sf -X POST "${ANWAY_GATEWAY_URL}/api/graph/events" \
+              -H "Content-Type: application/json" \
+              -H "x-connector-key: ${ANWAY_CONNECTOR_KEY}" \
+              --data-raw "{
+                \"type\": \"deploy_trigger\",
+                \"tenantId\": \"${ANWAY_TENANT_ID}\",
+                \"service\": \"${SVC}\",
+                \"sha\": \"${SHA}\",
+                \"imageUri\": \"${IMAGE_URI}\",
+                \"repo\": \"rgplvr/test-demo-setup\",
+                \"environment\": \"prod\",
+                \"triggeredBy\": \"github-actions\",
+                \"workflowRun\": \"${{ github.run_id }}\",
+                \"commitMessage\": \"${{ github.event.workflow_run.head_commit.message || 'manual trigger' }}\"
+              }" || echo "WARNING: Anway notification failed for ${SVC} — check ANWAY_GATEWAY_URL and ANWAY_CONNECTOR_KEY secrets"
+          done
+
+      - name: Summary
+        run: |
+          echo "==================================="
+          echo " Anway deploy gate triggered"
+          echo "==================================="
+          echo " Services : ${{ steps.vars.outputs.services }}"
+          echo " Image tag: ${{ steps.vars.outputs.tag }}"
+          echo " Anway will:"
+          echo "   1. Surface deploy gate in UI (who/what/confidence)"
+          echo "   2. On approval → trigger Spinnaker pipeline"
+          echo "   3. Monitor rollout via Prometheus"
+          echo "   4. Auto-rollback on error rate spike"
+          echo "   5. Audit log the full flow"
+          echo ""
+          echo " Check Anway UI or run:"
+          echo "   anway deploy status ${{ steps.vars.outputs.tag }}"

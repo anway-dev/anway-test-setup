@@ -1,0 +1,7 @@
+{
+  "name": "chaos-runner",
+  "version": "1.0.0",
+  "main": "src/chaos.js",
+  "scripts": { "start": "node src/chaos.js" },
+  "dependencies": {}
+}

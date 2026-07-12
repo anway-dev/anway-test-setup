@@ -1,0 +1,176 @@
+# kube-prometheus-stack for local OrbStack k8s.
+# Alertmanager fires → Anway gateway on host (port 8510).
+
+grafana:
+  enabled: true
+  adminPassword: admin
+  persistence:
+    enabled: false
+  resources:
+    requests:
+      cpu: 50m
+      memory: 128Mi
+    limits:
+      cpu: 200m
+      memory: 256Mi
+  readinessProbe:
+    initialDelaySeconds: 30
+    failureThreshold: 10
+  livenessProbe:
+    initialDelaySeconds: 120
+    failureThreshold: 20
+  sidecar:
+    dashboards:
+      enabled: true
+    resources:
+      requests:
+        cpu: 10m
+        memory: 128Mi
+      limits:
+        cpu: 100m
+        memory: 256Mi
+
+kubeStateMetrics:
+  enabled: true
+  resources:
+    requests:
+      cpu: 10m
+      memory: 32Mi
+    limits:
+      cpu: 100m
+      memory: 64Mi
+
+nodeExporter:
+  enabled: false
+
+prometheus:
+  prometheusSpec:
+    retention: 1d
+    storageSpec: {}
+    resources:
+      requests:
+        cpu: 50m
+        memory: 256Mi
+      limits:
+        cpu: 500m
+        memory: 512Mi
+    additionalScrapeConfigs:
+      - job_name: demo-services
+        kubernetes_sd_configs:
+          - role: pod
+            namespaces:
+              names: [demo]
+        relabel_configs:
+          - source_labels: [__meta_kubernetes_pod_annotation_prometheus_io_scrape]
+            action: keep
+            regex: "true"
+          - source_labels: [__meta_kubernetes_pod_annotation_prometheus_io_path]
+            action: replace
+            target_label: __metrics_path__
+            regex: (.+)
+          - source_labels: [__address__, __meta_kubernetes_pod_annotation_prometheus_io_port]
+            action: replace
+            regex: ([^:]+)(?::\d+)?;(\d+)
+            replacement: $1:$2
+            target_label: __address__
+          - source_labels: [__meta_kubernetes_pod_label_app]
+            target_label: service
+
+  additionalPrometheusRulesMap:
+    demo-alerts:
+      groups:
+        - name: demo-services
+          interval: 15s
+          rules:
+            - alert: HighErrorRate
+              expr: |
+                sum by (service) (rate(http_requests_total{status=~"5.."}[2m]))
+                /
+                sum by (service) (rate(http_requests_total[2m])) > 0.05
+              for: 30s
+              labels:
+                severity: critical
+              annotations:
+                summary: "High error rate on {{ $labels.service }}"
+                description: "Error rate {{ $value | humanizePercentage }} (threshold 5%)"
+
+            - alert: ServiceDown
+              expr: up{job=~"demo-services"} == 0
+              for: 15s
+              labels:
+                severity: critical
+              annotations:
+                summary: "Service {{ $labels.service }} is down"
+
+            - alert: HighLatencyP95
+              expr: |
+                histogram_quantile(0.95,
+                  sum by (le, service) (rate(http_request_duration_seconds_bucket[5m]))
+                ) > 1.0
+              for: 1m
+              labels:
+                severity: warning
+              annotations:
+                summary: "High P95 latency on {{ $labels.service }}"
+
+alertmanager:
+  alertmanagerSpec:
+    storage: {}
+    resources:
+      requests:
+        cpu: 10m
+        memory: 32Mi
+      limits:
+        cpu: 100m
+        memory: 64Mi
+    # Mount the alertmanager-webhook k8s secret (created by local-orbstack.sh)
+    secrets:
+      - alertmanager-webhook
+  config:
+    global:
+      resolve_timeout: 5m
+    route:
+      group_by: [alertname, service]
+      group_wait: 10s
+      group_interval: 1m
+      repeat_interval: 4h
+      receiver: anway-webhook
+    receivers:
+      - name: 'null'
+      - name: anway-webhook
+        webhook_configs:
+          - url: http://host.docker.internal:8510/api/events/alert
+            send_resolved: true
+            http_config:
+              authorization:
+                type: Bearer
+                credentials_file: /etc/alertmanager/secrets/alertmanager-webhook/token
+
+prometheusOperator:
+  resources:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+    limits:
+      cpu: 200m
+      memory: 128Mi
+
+defaultRules:
+  create: true
+  rules:
+    alertmanager: true
+    etcd: false
+    general: false
+    kubernetesApps: false
+    kubernetesResources: false
+    node: false
+    prometheus: true
+
+kubeEtcd:
+  enabled: false
+kubeScheduler:
+  enabled: false
+kubeControllerManager:
+  enabled: false
+kubeProxy:
+  enabled: false

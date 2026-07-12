@@ -1,0 +1,33 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: traffic-simulator
+  namespace: demo
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: traffic-simulator
+  template:
+    metadata:
+      labels:
+        app: traffic-simulator
+    spec:
+      serviceAccountName: demo-services
+      containers:
+        - name: traffic-simulator
+          image: ${ECR_REGISTRY}/anway-demo/traffic-simulator:${IMAGE_TAG}
+          env:
+            - name: GATEWAY_URL
+              value: "http://api-gateway:8080"
+            - name: RPS
+              value: "20"
+            - name: DURATION_MS
+              value: "0"
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 200m
+              memory: 128Mi

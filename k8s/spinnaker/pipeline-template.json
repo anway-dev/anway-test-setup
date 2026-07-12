@@ -1,0 +1,62 @@
+{
+  "schema": "v2",
+  "id": "demo-service-deploy",
+  "metadata": {
+    "name": "Demo Service Deploy",
+    "description": "Build → push ECR → rolling deploy to EKS demo namespace",
+    "owner": "platform-team"
+  },
+  "variables": [
+    { "name": "service",     "description": "Service name (e.g. order-service)", "type": "string" },
+    { "name": "imageTag",    "description": "Docker image tag to deploy",          "type": "string" },
+    { "name": "namespace",   "description": "K8s namespace",                       "type": "string", "defaultValue": "demo" },
+    { "name": "replicaCount","description": "Desired replicas",                    "type": "int",    "defaultValue": 2 }
+  ],
+  "stages": [
+    {
+      "name": "Bake Manifest",
+      "type": "bakeManifest",
+      "templateRenderer": "HELM3",
+      "releaseName": "{{ service }}",
+      "inputArtifacts": [
+        { "account": "ecr-demo", "artifact": { "type": "docker/image", "name": "{{ service }}", "tag": "{{ imageTag }}" } }
+      ],
+      "overrides": {
+        "image.tag": "{{ imageTag }}",
+        "replicaCount": "{{ replicaCount }}"
+      }
+    },
+    {
+      "name": "Deploy Canary (10%)",
+      "type": "deployManifest",
+      "account": "eks-demo",
+      "cloudProvider": "kubernetes",
+      "manifests": [],
+      "moniker": { "app": "{{ service }}" },
+      "namespaceOverride": "{{ namespace }}",
+      "trafficManagement": { "enabled": true, "options": { "enableTraffic": true, "namespace": "{{ namespace }}", "services": ["{{ service }}"], "strategy": "redblack" } }
+    },
+    {
+      "name": "Manual Judgment — promote to 100%?",
+      "type": "manualJudgment",
+      "judgmentInputs": ["Promote", "Rollback"],
+      "notifications": []
+    },
+    {
+      "name": "Deploy Full (100%)",
+      "type": "deployManifest",
+      "account": "eks-demo",
+      "requisiteStageRefIds": ["Manual Judgment — promote to 100%?"],
+      "stageEnabled": { "expression": "\"${#stage('Manual Judgment — promote to 100%?')['context']['judgmentInput']}\" == \"Promote\"", "type": "expression" }
+    },
+    {
+      "name": "Rollback",
+      "type": "undoRolloutManifest",
+      "account": "eks-demo",
+      "cloudProvider": "kubernetes",
+      "numRevisionsBack": 1,
+      "requisiteStageRefIds": ["Manual Judgment — promote to 100%?"],
+      "stageEnabled": { "expression": "\"${#stage('Manual Judgment — promote to 100%?')['context']['judgmentInput']}\" == \"Rollback\"", "type": "expression" }
+    }
+  ]
+}

@@ -1,0 +1,7 @@
+{
+  "name": "traffic-simulator",
+  "version": "1.0.0",
+  "main": "src/simulator.js",
+  "scripts": { "start": "node src/simulator.js" },
+  "dependencies": {}
+}

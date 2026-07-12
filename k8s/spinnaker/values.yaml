@@ -1,0 +1,55 @@
+# Spinnaker helm values (spinnaker/spinnaker chart)
+# Deploy: helm upgrade --install spinnaker spinnaker/spinnaker -n spinnaker -f values.yaml --timeout 20m
+
+halyard:
+  spinnakerVersion: 1.33.0
+  image:
+    tag: 1.57.0
+
+minio:
+  enabled: true
+  auth:
+    rootUser: spinnaker
+    # rootPassword from env at deploy time — never hardcoded
+
+gcs:
+  enabled: false
+
+s3:
+  enabled: false
+
+redis:
+  enabled: true
+
+ingress:
+  enabled: true
+  annotations:
+    kubernetes.io/ingress.class: alb
+    alb.ingress.kubernetes.io/scheme: internet-facing
+    alb.ingress.kubernetes.io/target-type: ip
+  host: ""  # set via deploy script
+
+spinnakerFeatureFlags:
+  - artifactsRewrite
+  - managedPipelineTemplatesV2UI
+
+# Kubernetes accounts — Spinnaker deploys to the demo namespace
+accounts:
+  - name: eks-demo
+    providerVersion: V2
+    kinds: []
+    omitKinds: []
+    context: ""
+    cacheThreads: 1
+    namespaces: [demo]
+    omitNamespaces: []
+    customResources: []
+
+# ECR as artifact store — credentials via IRSA, no static keys
+docker:
+  accounts:
+    - name: ecr-demo
+      address: ""  # ECR registry URL set by deploy script
+      username: AWS
+      passwordCommand: "aws ecr get-login-password --region us-east-1"
+      repositories: []

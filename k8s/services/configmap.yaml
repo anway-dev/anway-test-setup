@@ -1,0 +1,22 @@
+# Service discovery — each service reads upstream URLs from here
+# No secrets — only internal cluster URLs
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: service-urls
+  namespace: demo
+data:
+  AUTH_SERVICE_URL:           "http://auth-service:3000"
+  USER_SERVICE_URL:           "http://user-service:3000"
+  PRODUCT_SERVICE_URL:        "http://product-service:3000"
+  CART_SERVICE_URL:           "http://cart-service:3000"
+  ORDER_SERVICE_URL:          "http://order-service:3000"
+  PAYMENT_SERVICE_URL:        "http://payment-service:3000"
+  INVENTORY_SERVICE_URL:      "http://inventory-service:3000"
+  NOTIFICATION_SERVICE_URL:   "http://notification-service:3000"
+  SEARCH_SERVICE_URL:         "http://search-service:3000"
+  RECOMMENDATION_SERVICE_URL: "http://recommendation-service:3000"
+  REVIEW_SERVICE_URL:         "http://review-service:3000"
+  SHIPPING_SERVICE_URL:       "http://shipping-service:3000"
+  ANALYTICS_SERVICE_URL:      "http://analytics-service:3000"
+  ADMIN_SERVICE_URL:          "http://admin-service:3000"
